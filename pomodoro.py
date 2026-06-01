@@ -4,7 +4,7 @@ import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QSpinBox, QMessageBox)
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 
 class PomodoroTimer(QMainWindow):
     # 時間配置（秒）
@@ -76,6 +76,7 @@ class PomodoroTimer(QMainWindow):
 
         self._setup_fonts()
         self.init_ui()
+        self._setup_shortcuts()
 
     def _setup_fonts(self):
         self.font_title = self._create_font(self.FONT_SIZE_TITLE, bold=True)
@@ -134,6 +135,18 @@ class PomodoroTimer(QMainWindow):
         main_layout.addWidget(self.stats_label)
 
         central_widget.setLayout(main_layout)
+
+    def _setup_shortcuts(self):
+        QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(self._toggle_start_pause)
+        QShortcut(QKeySequence(Qt.Key.Key_Return), self).activated.connect(self._toggle_start_pause)
+        QShortcut(QKeySequence(Qt.Key.Key_R), self).activated.connect(self.reset_timer)
+        QShortcut(QKeySequence(Qt.Key.Key_T), self).activated.connect(self.toggle_theme)
+
+    def _toggle_start_pause(self):
+        if self.is_running:
+            self.pause_timer()
+        else:
+            self.start_timer()
 
     def _create_label(self, text, font, alignment=None, color=None):
         label = QLabel(text)
