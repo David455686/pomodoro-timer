@@ -14,14 +14,23 @@ On Windows you can also double-click `start.bat`. There is no build step, no tes
 ## Packaging as Windows Executable
 
 ```bat
-build.bat          # runs PyInstaller, outputs dist\番茄鐘.exe
+build.bat          # runs PyInstaller via pomodoro.spec, outputs dist\番茄鐘.exe
 ```
 
-Development dependencies (PyInstaller) are in `requirements-dev.txt`.
+Development dependencies (PyInstaller) are in `requirements-dev.txt`. The spec file (`pomodoro.spec`) bundles `ringtone.mp3` and `pomodoro.ico` into the single executable.
+
+## Data Storage
+
+All user data is stored in `%APPDATA%\番茄鐘\` on Windows (`~/.pomodoro/` on other platforms), created automatically on first run via `_get_app_data_dir()`:
+
+- `history.json` — list of completed work sessions `{date, time, task, type, duration_min}`
+- `tasks.json` — persistent task list `[{text, done}]`
 
 ## Architecture
 
-The application lives in two classes in `pomodoro.py`:
+The application lives in three classes in `pomodoro.py`:
+
+**`TaskListDialog(QDialog)`** — floating task list panel (`WindowStaysOnTopHint`). Tasks are `QListWidgetItem` with `ItemIsUserCheckable`. Saves to `tasks.json` on every change (`_on_item_changed`, `_add_task`, `_delete_selected`). Reloads from disk on every `show()` call. Opened/toggled by the 📝 title bar button.
 
 **`TimerDisplay(QWidget)`** — custom widget that paints a circular arc progress ring using `QPainter` in `paintEvent`. The arc draws from the top (90°) clockwise, shrinking as `_progress` (0.0–1.0) decreases. The centered time label is a `QLabel` child resized to fill the widget in `resizeEvent`.
 

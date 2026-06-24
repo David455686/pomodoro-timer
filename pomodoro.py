@@ -5,11 +5,23 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSpinBox, QLineEdit, QDialog, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFrame
+    QTableWidgetItem, QHeaderView, QFrame, QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import QTimer, Qt, QRectF
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QCursor
 
+
+def _get_app_data_dir():
+    if sys.platform == 'win32':
+        base = os.environ.get('APPDATA', os.path.expanduser('~'))
+    else:
+        base = os.path.expanduser('~')
+    path = os.path.join(base, '番茄鐘')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+# ── Timer display ─────────────────────────────────────────────────────────────
 
 class TimerDisplay(QWidget):
     """Circular arc progress ring with centered time label."""
@@ -60,6 +72,118 @@ class TimerDisplay(QWidget):
         painter.end()
 
 
+# ── Task list dialog ──────────────────────────────────────────────────────────
+
+class TaskListDialog(QDialog):
+    """Floating task list panel that stays on top alongside the timer."""
+
+    TASKS_FILE = 'tasks.json'
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('任務清單')
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.resize(280, 360)
+        self._tasks = []
+        self._load_tasks()
+        self._init_ui()
+
+    def _tasks_path(self):
+        return os.path.join(_get_app_data_dir(), self.TASKS_FILE)
+
+    def _load_tasks(self):
+        path = self._tasks_path()
+        try:
+            if os.path.isfile(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    self._tasks = json.load(f)
+        except Exception:
+            self._tasks = []
+
+    def _save_tasks(self):
+        try:
+            with open(self._tasks_path(), 'w', encoding='utf-8') as f:
+                json.dump(self._tasks, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setAlternatingRowColors(True)
+        self.list_widget.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.list_widget)
+
+        add_row = QHBoxLayout()
+        self.add_input = QLineEdit()
+        self.add_input.setPlaceholderText('新增任務，按 Enter...')
+        self.add_input.returnPressed.connect(self._add_task)
+        add_row.addWidget(self.add_input)
+        add_btn = QPushButton('新增')
+        add_btn.setFixedWidth(52)
+        add_btn.clicked.connect(self._add_task)
+        add_row.addWidget(add_btn)
+        layout.addLayout(add_row)
+
+        del_btn = QPushButton('刪除選取')
+        del_btn.clicked.connect(self._delete_selected)
+        layout.addWidget(del_btn)
+
+        self._refresh_list()
+
+    def _refresh_list(self):
+        self.list_widget.blockSignals(True)
+        self.list_widget.clear()
+        for task in self._tasks:
+            item = QListWidgetItem(task['text'])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if task.get('done') else Qt.CheckState.Unchecked
+            )
+            self.list_widget.addItem(item)
+        self.list_widget.blockSignals(False)
+
+    def _on_item_changed(self, item):
+        row = self.list_widget.row(item)
+        if 0 <= row < len(self._tasks):
+            self._tasks[row]['done'] = (item.checkState() == Qt.CheckState.Checked)
+            self._save_tasks()
+
+    def _add_task(self):
+        text = self.add_input.text().strip()
+        if not text:
+            return
+        self._tasks.append({'text': text, 'done': False})
+        self._save_tasks()
+        self._refresh_list()
+        self.add_input.clear()
+        self.list_widget.scrollToBottom()
+
+    def _delete_selected(self):
+        selected = self.list_widget.selectedItems()
+        if not selected:
+            return
+        rows = sorted([self.list_widget.row(i) for i in selected], reverse=True)
+        for row in rows:
+            if 0 <= row < len(self._tasks):
+                self._tasks.pop(row)
+        self._save_tasks()
+        self._refresh_list()
+
+    def show(self):
+        self._load_tasks()
+        self._refresh_list()
+        super().show()
+
+
+# ── Main window ───────────────────────────────────────────────────────────────
+
 class PomodoroTimer(QMainWindow):
     DEFAULT_WORK_TIME = 25 * 60
     DEFAULT_BREAK_TIME = 5 * 60
@@ -89,6 +213,7 @@ class PomodoroTimer(QMainWindow):
             'close':   {'bg': '#e05252', 'hover': '#c04040'},
             'minimize':{'bg': '#aaaaaa', 'hover': '#888888'},
             'history': {'bg': '#7878b0', 'hover': '#6060a0'},
+            'tasks':   {'bg': '#4a8fd4', 'hover': '#3a7fc4'},
             'theme':   {'bg': '#9090a8', 'hover': '#787890'},
         },
     }
@@ -111,6 +236,7 @@ class PomodoroTimer(QMainWindow):
             'close':   {'bg': '#ff6b6b', 'hover': '#e05252'},
             'minimize':{'bg': '#555570', 'hover': '#444460'},
             'history': {'bg': '#8888cc', 'hover': '#6666aa'},
+            'tasks':   {'bg': '#74b9ff', 'hover': '#4dabf7'},
             'theme':   {'bg': '#4a4a6a', 'hover': '#383858'},
         },
     }
@@ -132,6 +258,7 @@ class PomodoroTimer(QMainWindow):
         self.auto_start_countdown = 0
         self._countdown_base_msg = ''
         self._drag_pos = None
+        self._task_dialog = None
 
         self.timer = QTimer()
         self.timer.timeout.connect(self._tick)
@@ -218,12 +345,14 @@ class PomodoroTimer(QMainWindow):
         layout.addWidget(self.title_label)
         layout.addStretch()
 
+        self.tasks_btn   = self._make_icon_btn('📝', 'tasks',   self._toggle_tasks)
         self.history_btn = self._make_icon_btn('📋', 'history', self._show_history)
         self.theme_btn   = self._make_icon_btn('🌙', 'theme',   self.toggle_theme)
         self.minimize_btn= self._make_icon_btn('—',  'minimize', self.showMinimized)
         self.close_btn   = self._make_icon_btn('✕',  'close',    self.close)
 
-        for btn in [self.history_btn, self.theme_btn, self.minimize_btn, self.close_btn]:
+        for btn in [self.tasks_btn, self.history_btn, self.theme_btn,
+                    self.minimize_btn, self.close_btn]:
             layout.addWidget(btn)
 
         bar.mousePressEvent = self._title_press
@@ -543,19 +672,31 @@ class PomodoroTimer(QMainWindow):
         self._apply_action_style(self.start_btn, 'start')
         self._apply_action_style(self.pause_btn, 'pause')
         self._apply_action_style(self.reset_btn, 'reset')
-        self._apply_icon_style(self.history_btn, 'history')
-        self._apply_icon_style(self.theme_btn,   'theme')
-        self._apply_icon_style(self.minimize_btn,'minimize')
-        self._apply_icon_style(self.close_btn,   'close')
+        self._apply_icon_style(self.tasks_btn,    'tasks')
+        self._apply_icon_style(self.history_btn,  'history')
+        self._apply_icon_style(self.theme_btn,    'theme')
+        self._apply_icon_style(self.minimize_btn, 'minimize')
+        self._apply_icon_style(self.close_btn,    'close')
         self.stats_label.setStyleSheet(
             f'color: {self.current_theme["status_text"]}; background: transparent;'
         )
         self._refresh_display()
 
+    # ── Tasks ─────────────────────────────────────────────────────────────────
+
+    def _toggle_tasks(self):
+        if self._task_dialog is None:
+            self._task_dialog = TaskListDialog(self)
+        if self._task_dialog.isVisible():
+            self._task_dialog.hide()
+        else:
+            self._task_dialog.show()
+            self._task_dialog.raise_()
+
     # ── History ───────────────────────────────────────────────────────────────
 
     def _history_path(self):
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'history.json')
+        return os.path.join(_get_app_data_dir(), 'history.json')
 
     def _save_session(self):
         task = self.task_input.text().strip() or '未命名任務'
@@ -655,6 +796,8 @@ $player.Stop()
     def closeEvent(self, event):
         self.timer.stop()
         self.auto_start_timer.stop()
+        if self._task_dialog:
+            self._task_dialog.close()
         event.accept()
 
 
